@@ -10,17 +10,45 @@ import Data.Text
 import GHC.Generics (Generic)
 import Control.DeepSeq
 
-
+-- | Version
 data Version = JSONRPC2_0 | JSONRPC1_0
-  deriving (Show, Eq, Read, Generic, NFData, FromJSON, ToJSON)
+  deriving (Show, Eq, Read, Generic, NFData)
 
+instance FromJSON Version where
+  parseJSON "1.0" = pure JSONRPC1_0
+  parseJSON "2.0" = pure JSONRPC2_0
+  parseJSON _ = error "wrong version"
+
+instance ToJSON Version where
+  toJSON JSONRPC1_0 = "1.0"
+  toJSON JSONRPC2_0 = "2.0"
+
+
+data Coord = Coord { x :: Double, y :: Double } deriving Generic
+instance FromJSON Coord
+instance ToJSON Coord
+
+-- | Method
 newtype Method = Method Text
   deriving (Show, Eq, Read, Generic, NFData, FromJSON, ToJSON)
 
-data Id = IdStr Text | IdNum Int
-  deriving (Eq, Show, Generic, NFData, FromJSON, ToJSON)
 
--- | Client side request can either be `Request` or `Notification`
+-- | Id
+data Id = IdStr Text | IdNum Int
+  deriving (Eq, Show, Generic, NFData)
+
+instance FromJSON Id where
+  parseJSON (String s) = pure $ IdStr s
+  parseJSON (Number (I n)) = pure $ IdNum n
+
+
+instance ToJSON Id where
+  toJSON (IdStr s) = toJSON s
+  toJSON (IdNum n) = toJSON n
+
+
+-- | Request Object
+-- Client side request can either be `Request` or `Notification`
 -- the only difference is `Request` need to have an unique id.
 data Request =
     Request       { unReqJsonRPC :: !Version
@@ -35,7 +63,8 @@ data Request =
   deriving (Eq, Show, Generic, NFData, FromJSON, ToJSON)
 
 
--- | Response can either return a result or error message.
+-- | Response Object
+-- It can either return a result or error message.
 data Response =
     Response { unResJsonRPC :: !Version
              , unResult :: !Value
@@ -47,6 +76,12 @@ data Response =
              }
   deriving (Eq, Show, Generic, NFData, FromJSON, ToJSON)
 
--- instance NFData Request where
---   rnf (Request v m p id) = rnf v `seq` rnf m `seq` rnf p `seq` rnf id
---   rnf (Notification v m p) = rnf v `seq` rnf m `seq` rnf p
+
+-- | Error Object
+data Error =
+    ErrorV2 { unErrorCode :: !Int
+            , unErrorMessage :: !Text
+            , unErrorData :: !Value
+            }
+  | ErrorV1 { unErrorData :: !Value }
+  deriving (Eq, Show, Generic, NFData, FromJSON, ToJSON)
