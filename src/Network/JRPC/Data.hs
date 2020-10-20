@@ -1,9 +1,20 @@
+{-# LANGUAGE DeriveAnyClass      #-}
 {-# LANGUAGE DeriveGeneric       #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-module Network.JRPC.Data where
+module Network.JRPC.Data
+  ( Version(..)
+  , Id(..)
+  , Method(..)
+  , Request(..)
+  , Response(..)
+  , Error(..)
+  , ErrorCode(..)
+  , errorobj2
+  )
+    where
 
 -- https://www.jsonrpc.org/specification#request_object
 
@@ -11,9 +22,10 @@ import           Control.DeepSeq
 import           Data.Aeson
 import           Data.Aeson.Types
 import           Data.Foldable
-import           Data.Hashable    (Hashable)
+import qualified Data.HashMap.Strict as HM
+import           Data.Hashable       (Hashable)
 import           Data.Text
-import           GHC.Generics     (Generic)
+import           GHC.Generics        (Generic)
 
 --------------
 --  Basic   --
@@ -162,6 +174,60 @@ instance ToJSON Response where
 -------------------
 --  ErrorObject  --
 -------------------
+data ErrorCode = ParseError | InvalidRequest | InvalidParams | MethodNotFound | InternalError | ServerError Int
+  deriving (Eq, Show, Generic, Hashable)
+
+ecode = [ (ParseError,  (-32700))
+        , (InvalidRequest,  (-32600))
+        , (MethodNotFound,  (-32601))
+        , (InvalidParams,  (-32602))
+        , (InternalError,  (-32603))
+        ]
+codeMapFrom = HM.fromList ecode
+codeMapTo = HM.fromList $ (\(a, b) -> (b, a)) <$> ecode
+
+fromEcode :: ErrorCode -> Int
+fromEcode = \case
+  ServerError n -> n
+  other         -> codeMapFrom HM.! other
+
+-- >>> toEcode (-32098)
+-- <command line>: /nix/store/9df65igwjmf2wbw0gbrrgair6piqjgmi-glibc-2.31/lib/librt.so: symbol pthread_sigmask version GLIBC_2.2.5 not defined in file libpthread.so.0 with link time reference
+toEcode :: Int -> Maybe ErrorCode
+toEcode n | isValidEcode n = Just $ if n >= (-32099) && n <= (-32000)
+                                       then ServerError n
+                                       else codeMapTo HM.! n
+  | otherwise = Nothing
+
+instance NFData ErrorCode
+
+instance FromJSON ErrorCode where
+  parseJSON = withText "ErrorCode" $ \t -> let v = read . unpack $ t :: Int
+                                            in case toEcode v of
+                                                 Just c  -> pure c
+                                                 Nothing -> mempty
+
+instance ToJSON ErrorCode where
+  toJSON = toJSON . fromEcode
+
+-- | Check if the error code is valid
+isValidEcode :: Int -> Bool
+isValidEcode c = c == (-32700)
+    || (c >= (-32603) && c <= (-32600))
+    || (c >= (-32099) && c <= (-32000))
+
+parseError o = do
+  codeNum <- o .: "code"
+  let code = toEcode codeNum
+  case code of
+    Just c -> if isValidEcode codeNum
+                 then asum [ ErrorV2 <$> pure c <*> o .: "message" <*> o .: "data"
+                           , ErrorV1 <$> o .: "data" ]
+                 else mempty
+    Nothing -> mempty
+
+-- | Best way to creat Error is through constructor errorobj2.
+-- errorobj2 will ensure valid error code.
 data Error
   = ErrorV2
       { errorCode    :: !ErrorCode,
@@ -170,63 +236,7 @@ data Error
       }
   | ErrorV1 {errorData :: !Value}
   deriving (Eq, Show, Generic)
-
 instance NFData Error
-
-data ErrorCode = ParseError | InvalidRequest | InvalidParams | MethodNotFound | InternalError | ServerError Int
-  deriving (Eq, Show, Generic)
-
-instance NFData ErrorCode
-
-instance FromJSON ErrorCode where
-  parseJSON = undefined
-
-instance ToJSON ErrorCode where
-  toJSON = toJSON . show . ecode
-
-ecode :: ErrorCode -> Int
-ecode = \case
-  ParseError     -> (-32700)
-  InvalidRequest -> (-32600)
-  MethodNotFound -> (-32601)
-  InvalidParams  -> (-32602)
-  InternalError  -> (-32603)
-  ServerError n  -> n
-
--- | Check if the error code is valid
-isValidErrorCode :: ErrorCode -> Bool
-isValidErrorCode code =
-  c == (-32700)
-    || (c >= (-32603) && c <= (-32600))
-    || (c >= (-32099) && c <= (-32000))
-  where
-    c = ecode code
-
--- | Create ErrorV2
--- >>> errorobj2 ParseError "good"
-errorobj2 :: ErrorCode -> Text -> (Value -> Error)
-errorobj2 e info = ErrorV2 e (msg n info)
-  where
-    n = ecode e
-    msg n = showErr n (pack . show $ e)
-      where
-        showErr errCode errTitle errMsg =
-          pack "["
-            <> (pack $ show errCode)
-            <> pack "] "
-            <> errTitle
-            <> pack ": "
-            <> errMsg
-
-parseError o = do
-  code <- o .: "code"
-  if isValidErrorCode code
-    then
-      asum
-        [ ErrorV2 <$> pure code <*> o .: "message" <*> o .: "data",
-          ErrorV1 <$> o .: "data"
-        ]
-    else mempty
 
 instance FromJSON Error where
   parseJSON = withObject "Error" parseError
@@ -239,6 +249,23 @@ instance ToJSON Error where
         "message" .= m,
         "data" .= n
       ]
+
+-- | Create ErrorV2
+-- >>> errorobj2 ParseError "good"
+errorobj2 :: ErrorCode -> Text -> (Value -> Error)
+errorobj2 e info = ErrorV2 e (msg n info)
+  where
+    n = fromEcode e
+    msg n = showErr n (pack . show $ e)
+      where
+        showErr errCode errTitle errMsg =
+          pack "["
+            <> (pack $ show errCode)
+            <> pack "] "
+            <> errTitle
+            <> pack ": "
+            <> errMsg
+
 
 ---------------
 --  Message  --
