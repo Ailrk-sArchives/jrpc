@@ -191,10 +191,10 @@ errorobj2 n info = ErrorV2 n (msg info)
 parseError o = do
   code <- o .: "code"
   if isValidErrorCode code
-     then asum [ ErrorV1 <$> o .: "data"
-               , ErrorV2 <$> pure code
+     then asum [ ErrorV2 <$> pure code
                          <*> o .: "message"
-                         <*> o .: "data"]
+                         <*> o .: "data"
+               , ErrorV1 <$> o .: "data"]
      else mempty
 
 instance FromJSON Error where
