@@ -15,10 +15,20 @@ import Data.Foldable
 import Control.DeepSeq
 
 
+--------------
+--  Basic   --
+--------------
 -- | Version
 data Version = JSONRPC2_0 | JSONRPC1_0
   deriving (Show, Eq, Read, Generic)
 instance NFData Version
+
+parseVersion :: Object -> Parser Version
+parseVersion v = do
+  val <- v .:? "jsonrpc"
+  return $ case val of
+           Just ("2.0" :: Text) -> JSONRPC2_0
+           _ -> JSONRPC1_0
 
 instance FromJSON Version where
   parseJSON (String n) = case n of
@@ -29,20 +39,11 @@ instance ToJSON Version where
   toJSON JSONRPC2_0 = "2.0"
   toJSON JSONRPC1_0 = "1.0"
 
-parseVersion :: Object -> Parser Version
-parseVersion v = do
-  val <- v .:? "jsonrpc"
-  return $ case val of
-           Just ("2.0" :: Text) -> JSONRPC2_0
-           _ -> JSONRPC1_0
-
-
 -- | Method
 newtype Method = Method Text deriving (Show, Eq, Read, Generic)
 instance NFData Method
 instance FromJSON Method
 instance ToJSON Method
-
 
 -- | Id
 data Id = IdStr Text | IdNum Int
@@ -59,6 +60,9 @@ instance ToJSON Id where
   toJSON (IdNum n) = toJSON n
 
 
+---------------
+--  Request  --
+---------------
 -- | Request Object
 -- Client side request can either be `Request` or `Notification`
 -- the only difference is `Request` need to have an unique id.
@@ -104,6 +108,9 @@ instance ToJSON Request where
     ]
 
 
+----------------
+--  Response  --
+----------------
 -- | Response Object
 -- It can either return a result or error message.
 data Response =
@@ -112,7 +119,7 @@ data Response =
              , unResId :: !Id
              }
   | OnError  { unResJsonRPC :: !Version
-             , unResError :: !Value
+             , unResError :: !Error
              , unResId :: !Id
              }
   deriving (Eq, Show, Generic)
@@ -144,27 +151,9 @@ instance ToJSON Response where
     , "id" .= i]
 
 
--- | Error Object
-data ErrorCode
-  = ParseError
-  | InvalidRequest
-  | MethodNotFound
-  | InternalError
-  | ServerError Text
-  deriving (Show, Eq, Read, Generic)
-
-instance FromJSON ErrorCode
-
-instance ToJSON ErrorCode where
-  toJSON ParseError = "-32700"
-  toJSON InvalidRequest = "-32600"
-  toJSON MethodNotFound = "-32601"
-  toJSON InternalError = "-32602"
-  toJSON (ServerError s) = let n = read (unpack s) :: Int
-                            in if n > (-32099) && n < (-32000)
-                                  then toJSON s
-                                  else error "Server Error Code out of range"
-
+-------------------
+--  ErrorObject  --
+-------------------
 data Error =
     ErrorV2 { unErrorCode :: !Int
             , unErrorMessage :: !Text
@@ -175,17 +164,52 @@ data Error =
 
 instance NFData Error
 
+-- | Check if the error code is valid
+isValidErrorCode :: Int -> Bool
+isValidErrorCode code = code == (-32700)
+  || (code >= (-32603) && code <= (-32600))
+  ||  (code >= (-32099) && code <= (-32000))
+
+-- | Create ErrorV2
+errorobj2 :: Int -> Text -> (Value -> Error)
+errorobj2 n info = ErrorV2 n (msg info)
+  where
+    showErr :: Int -> Text -> Text -> Text
+    showErr errCode errTitle errMsg = pack "["
+      <> (pack  $ show errCode) <> pack "] " <> errTitle
+      <> pack ": " <> errMsg
+    msg  = case n of
+             (-32700) -> showErr n "Parse Error"
+             (-32600) -> showErr n "Invalid Request"
+             (-32601) -> showErr n "Method Not Found"
+             (-32602) -> showErr n "Invalid Params"
+             (-32603) -> showErr n "Internal error"
+             _ -> if (n >= (-32099) && n <= (-32000))
+                     then showErr n "Server error"
+                     else const "Unkown error code"
+
 parseError o = do
-  asum [ ErrorV1 <$> o .: "data"
-       , ErrorV2 <$> o .: "code"
-                 <*> o .: "message"
-                 <*> o .: "data"]
+  code <- o .: "code"
+  if isValidErrorCode code
+     then asum [ ErrorV1 <$> o .: "data"
+               , ErrorV2 <$> pure code
+                         <*> o .: "message"
+                         <*> o .: "data"]
+     else mempty
 
 instance FromJSON Error where
   parseJSON = withObject "Error" parseError
 
 instance ToJSON Error where
-  toJSON (ErrorV1 n) = object $ [ "data" .= n ]
-  toJSON (ErrorV2 c m n) = object $ [ "code" .= c
-                                    , "message" .= m
-                                    , "data" .= n]
+  toJSON (ErrorV1 n) = object [ "data" .= n ]
+  toJSON (ErrorV2 c m n)  = object [ "code" .= c
+                                   , "message" .= m
+                                   , "data" .= n
+                                   ]
+
+
+---------------
+--  Message  --
+---------------
+
+-- | Batch
