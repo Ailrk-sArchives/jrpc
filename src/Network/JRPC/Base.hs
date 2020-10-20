@@ -1,5 +1,10 @@
-module Network.JRPC.Base (
-  ) where
+{-# LANGUAGE OverloadedStrings #-}
 
+module Network.JRPC.Base
+  (
+  )
+where
 
-import Data.Conduit
+import Conduit
+import Control.Monad
+import Data.ByteString
