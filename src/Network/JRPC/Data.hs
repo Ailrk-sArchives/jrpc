@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveGeneric       #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Network.JRPC.Data
@@ -12,11 +13,16 @@ module Network.JRPC.Data
   , Response(..)
   , Error(..)
   , ErrorCode(..)
-  , errorobj2
+  , errorobj
   )
     where
 
 -- https://www.jsonrpc.org/specification#request_object
+{- This module defines request, response and error data types plus
+   their aeson instances.
+   Besides that, we have typeclass FromRequest, ToRequest, fromResponse,
+   toResponse that can be helpful when you wan to convert
+-}
 
 import           Control.DeepSeq
 import           Data.Aeson
@@ -26,6 +32,7 @@ import qualified Data.HashMap.Strict as HM
 import           Data.Hashable       (Hashable)
 import           Data.Text
 import           GHC.Generics        (Generic)
+
 
 --------------
 --  Basic   --
@@ -54,19 +61,14 @@ instance ToJSON Version where
 
 -- | Method
 newtype Method = Method Text deriving (Show, Eq, Read, Generic)
-
 instance NFData Method
-
 instance FromJSON Method
-
 instance ToJSON Method
 
--- | Id
+-- | Id can be either string or integer.
 data Id = IdStr Text | IdNum Int
   deriving (Eq, Show, Generic)
-
 instance NFData Id
-
 instance Hashable Id
 
 instance FromJSON Id where
@@ -78,13 +80,14 @@ instance ToJSON Id where
   toJSON (IdStr s) = toJSON s
   toJSON (IdNum n) = toJSON n
 
+
 ---------------
 --  Request  --
 ---------------
-
 -- | Request Object
+--
 -- Client side request can either be `Request` or `Notification`
--- the only difference is `Request` need to have an unique id.
+-- Notification will not receive a response.
 data Request
   = Request { reqJsonRPC :: !Version
             , reqMethod  :: !Method
@@ -99,45 +102,41 @@ data Request
 
 instance NFData Request
 
+-- | parse
 parseRequest :: Object -> Parser Request
 parseRequest o = do
-  v <- parseVersion o
-  m <- o .: "methods"
-  p <- o .:? "params" .!= Null
-  i <- o .:? "id"
-  return $ case i of
-    Just id -> Request v m p id
-    _       -> Notification v m p
+  reqJsonRPC <- (parseVersion o)
+  reqMethod <- o .: "methods"
+  reqParams <- o .:? "params" .!= Null
+  reqId' <- o .:? "id"
+  return $ case reqId' of
+             Just reqId -> Request {..}
+             _          -> Notification {..}
 
 instance FromJSON Request where
   parseJSON = withObject "Request" parseRequest
 
 instance ToJSON Request where
-  toJSON (Request v m p i)
-    | p == Null = object $ ["jsonrpc" .= v, "method" .= m, "id" .= i]
+  toJSON Request{..}
+    | reqParams == Null = object $
+      ["jsonrpc" .= reqJsonRPC, "method" .= reqMethod, "id" .= reqId]
     | otherwise =
       object $
-        [ "jsonrpc" .= v,
-          "methods" .= m,
-          "params" .= p,
-          "id" .= i
+        [ "jsonrpc" .= reqJsonRPC, "methods" .= reqMethod, "params" .= reqParams,
+          "id" .= reqId
         ]
-  toJSON (Notification v m p) =
+  toJSON Notification{..}  =
     object $
-      [ "jsonrpc" .= v,
-        "methods" .= m,
-        "params" .= p
-      ]
+      [ "jsonrpc" .= reqJsonRPC, "methods" .= reqMethod, "params" .= reqParams ]
 
 ----------------
 --  Response  --
 ----------------
-
 -- | `Response` on success, `OnError` on error.
 data Response
   = Response
       { resJsonRPC :: !Version
-      , result     :: !Value
+      , resResult  :: !Value
       , resId      :: !Id
       }
   | OnError
@@ -151,25 +150,26 @@ instance NFData Response
 
 parseResponse :: Object -> Parser Response
 parseResponse o = do
-  v <- parseVersion o
-  r <- o .:? "result"
-  e <- o .:? "error"
-  id <- o .: "id"
-  return $ case (r, e) of
-    (Just r', Nothing) -> Response v r' id
-    (Nothing, Just e') -> OnError v e' id
-    _                  -> error "Impossible response"
+  resJsonRPC <- parseVersion o
+  resResult' <- o .:? "result"
+  resError' <- o .:? "error"
+  resId <- o .: "id"
+  return $ case (resResult', resError') of
+    (Just resResult, Nothing) -> Response {..}
+    (Nothing, Just resError)  -> OnError {..}
+    _                         -> error "Impossible response"
 
 instance FromJSON Response where
   parseJSON = withObject "Response" parseResponse
 
 instance ToJSON Response where
-  toJSON (Response v r i) =
+  toJSON Response{..} =
     object $
-      ["jsonrpc" .= v, "result" .= r, "id" .= i]
-  toJSON (OnError v e i) =
+      ["jsonrpc" .= resJsonRPC, "result" .= resResult, "id" .= resId]
+  toJSON OnError{..} =
     object $
-      ["jsonrpc" .= v, "error" .= e, "id" .= i]
+      ["jsonrpc" .= resJsonRPC, "error" .= resError, "id" .= resId]
+  {-# INLINE toJSON #-}
 
 -------------------
 --  ErrorObject  --
@@ -183,6 +183,7 @@ ecode = [ (ParseError,  (-32700))
         , (InvalidParams,  (-32602))
         , (InternalError,  (-32603))
         ]
+-- build isomorphism between error code and their adt representation.
 codeMapFrom = HM.fromList ecode
 codeMapTo = HM.fromList $ (\(a, b) -> (b, a)) <$> ecode
 
@@ -191,8 +192,6 @@ fromEcode = \case
   ServerError n -> n
   other         -> codeMapFrom HM.! other
 
--- >>> toEcode (-32098)
--- <command line>: /nix/store/9df65igwjmf2wbw0gbrrgair6piqjgmi-glibc-2.31/lib/librt.so: symbol pthread_sigmask version GLIBC_2.2.5 not defined in file libpthread.so.0 with link time reference
 toEcode :: Int -> Maybe ErrorCode
 toEcode n | isValidEcode n = Just $ if n >= (-32099) && n <= (-32000)
                                        then ServerError n
@@ -202,10 +201,11 @@ toEcode n | isValidEcode n = Just $ if n >= (-32099) && n <= (-32000)
 instance NFData ErrorCode
 
 instance FromJSON ErrorCode where
-  parseJSON = withText "ErrorCode" $ \t -> let v = read . unpack $ t :: Int
-                                            in case toEcode v of
-                                                 Just c  -> pure c
-                                                 Nothing -> mempty
+  parseJSON = withText "ErrorCode" $ \t -> do
+    let v = read . unpack $ t :: Int
+    case toEcode v of
+      Just c  -> pure c
+      Nothing -> mempty
 
 instance ToJSON ErrorCode where
   toJSON = toJSON . fromEcode
@@ -213,9 +213,9 @@ instance ToJSON ErrorCode where
 -- | Check if the error code is valid
 isValidEcode :: Int -> Bool
 isValidEcode c = c == (-32700)
-    || (c >= (-32603) && c <= (-32600))
-    || (c >= (-32099) && c <= (-32000))
+    || (c >= (-32603) && c <= (-32600)) || (c >= (-32099) && c <= (-32000))
 
+parseError :: Object -> Parser Error
 parseError o = do
   codeNum <- o .: "code"
   let code = toEcode codeNum
@@ -243,28 +243,25 @@ instance FromJSON Error where
 
 instance ToJSON Error where
   toJSON (ErrorV1 n) = object ["data" .= n]
-  toJSON (ErrorV2 c m n) =
+  toJSON ErrorV2{..} =
     object
-      [ "code" .= c,
-        "message" .= m,
-        "data" .= n
+      [ "code" .= errorCode,
+        "message" .= errorMessage,
+        "data" .= errorData
       ]
 
--- | Create ErrorV2
+-- | Helper function to create error object.
+-- It only creates error for jsonrpc 2.0
 -- >>> errorobj2 ParseError "good"
-errorobj2 :: ErrorCode -> Text -> (Value -> Error)
-errorobj2 e info = ErrorV2 e (msg n info)
+errorobj :: ErrorCode -> Text -> (Value -> Error)
+errorobj e info = ErrorV2 e (msg n info)
   where
     n = fromEcode e
     msg n = showErr n (pack . show $ e)
       where
         showErr errCode errTitle errMsg =
-          pack "["
-            <> (pack $ show errCode)
-            <> pack "] "
-            <> errTitle
-            <> pack ": "
-            <> errMsg
+          pack "[" <> (pack $ show errCode) <> pack "] " <> errTitle
+            <> pack ": " <> errMsg
 
 
 ---------------

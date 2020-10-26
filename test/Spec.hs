@@ -35,7 +35,7 @@ errorobjSpec =
     it "Error V2 decode" $ (decode err1str :: Maybe Error) `shouldBe` Just err1
   where
     err1str = "{\"data\":1,\"code\":-32700,\"message\":\"[-32700] ParseError: This is delibrate\"}"
-    err1 = errorobj2 ParseError "This is delibrate" $ Number 1
+    err1 = errorobj ParseError "This is delibrate" $ Number 1
 
 responseSpec :: Spec
 responseSpec =
@@ -50,11 +50,11 @@ responseSpec =
     onErr1Str = "{\"error\":{\"data\":1,\"code\":-32700,\"message\":\"[-32700] ParseError: This is delibrate\"},\"jsonrpc\":\"2.0\",\"id\":20}"
 
     res1 = Response { resJsonRPC = JSONRPC2_0
-                    , result = Number 1.0
+                    , resResult = Number 1.0
                     , resId = IdNum 20
                     }
     onErr1 = OnError { resJsonRPC = JSONRPC2_0
                      , resError =
-                       errorobj2 ParseError "This is delibrate" $ Number 1
+                       errorobj ParseError "This is delibrate" $ Number 1
                      , resId = IdNum 20
                      }

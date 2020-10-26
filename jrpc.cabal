@@ -31,6 +31,7 @@ library
     , text
     , mtl
     , conduit
+    , network-conduit
     , deepseq
     , unordered-containers
     , vector
@@ -46,6 +47,8 @@ test-suite test
   build-depends:
       base >=4.13 && <4.14
     , aeson
+    , conduit
+    , network-conduit
     , text
     , hspec
     , jrpc
