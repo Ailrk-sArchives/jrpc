@@ -80,7 +80,6 @@ instance ToJSON Id where
   toJSON (IdStr s) = toJSON s
   toJSON (IdNum n) = toJSON n
 
-
 ---------------
 --  Request  --
 ---------------
@@ -268,4 +267,3 @@ errorobj e info = ErrorV2 e (msg n info)
 --  Message  --
 ---------------
 -- | Batch
-
