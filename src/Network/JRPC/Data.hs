@@ -1,9 +1,11 @@
-{-# LANGUAGE DeriveAnyClass      #-}
-{-# LANGUAGE DeriveGeneric       #-}
-{-# LANGUAGE LambdaCase          #-}
-{-# LANGUAGE OverloadedStrings   #-}
-{-# LANGUAGE RecordWildCards     #-}
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE DeriveAnyClass             #-}
+{-# LANGUAGE DeriveGeneric              #-}
+{-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase                 #-}
+{-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE RecordWildCards            #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
 
 module Network.JRPC.Data
   ( Version(..)
@@ -39,16 +41,16 @@ import           GHC.Generics        (Generic)
 --------------
 -- | Version
 data Version = JSONRPC2_0 | JSONRPC1_0
-  deriving (Show, Eq, Read, Generic)
+  deriving stock (Show, Eq, Read, Generic)
 
 instance NFData Version
 
 parseVersion :: Object -> Parser Version
 parseVersion v = do
   val <- v .:? "jsonrpc"
-  return $ case val of
-    Just ("2.0" :: Text) -> JSONRPC2_0
-    _                    -> JSONRPC1_0
+  case val of
+    Just ("2.0" :: Text) -> pure JSONRPC2_0
+    _                    -> pure JSONRPC1_0
 
 instance FromJSON Version where
   parseJSON (String n) = case n of
@@ -60,20 +62,18 @@ instance ToJSON Version where
   toJSON JSONRPC1_0 = "1.0"
 
 -- | Method
-newtype Method = Method Text deriving (Show, Eq, Read, Generic)
-instance NFData Method
-instance FromJSON Method
-instance ToJSON Method
+newtype Method = Method Text
+  deriving stock (Show, Eq, Read, Generic)
+  deriving newtype (NFData, FromJSON, ToJSON)
 
 -- | Id can be either string or integer.
 data Id = IdStr Text | IdNum Int
-  deriving (Eq, Show, Generic)
-instance NFData Id
-instance Hashable Id
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass (NFData, Hashable)
 
 instance FromJSON Id where
-  parseJSON (String s) = pure $ IdStr s
-  parseJSON (Number n) = pure $ IdNum $ floor n
+  parseJSON (String s) = pure . IdStr $ s
+  parseJSON (Number n) = pure . IdNum . floor $ n
   parseJSON _          = mempty
 
 instance ToJSON Id where
@@ -97,7 +97,7 @@ data Request
                  , reqMethod  :: !Method
                  , reqParams  :: !Value
                  }
-  deriving (Eq, Show, Generic)
+  deriving stock (Eq, Show, Generic)
 
 instance NFData Request
 
@@ -108,9 +108,9 @@ parseRequest o = do
   reqMethod <- o .: "methods"
   reqParams <- o .:? "params" .!= Null
   reqId' <- o .:? "id"
-  return $ case reqId' of
-             Just reqId -> Request {..}
-             _          -> Notification {..}
+  case reqId' of
+    Just reqId -> pure Request {..}
+    _          -> pure Notification {..}
 
 instance FromJSON Request where
   parseJSON = withObject "Request" parseRequest
@@ -143,7 +143,7 @@ data Response
       , resError   :: !Error
       , resId      :: !Id
       }
-  deriving (Eq, Show, Generic)
+  deriving stock (Eq, Show, Generic)
 
 instance NFData Response
 
@@ -153,10 +153,10 @@ parseResponse o = do
   resResult' <- o .:? "result"
   resError' <- o .:? "error"
   resId <- o .: "id"
-  return $ case (resResult', resError') of
-    (Just resResult, Nothing) -> Response {..}
-    (Nothing, Just resError)  -> OnError {..}
-    _                         -> error "Impossible response"
+  case (resResult', resError') of
+    (Just resResult, Nothing) -> pure Response {..}
+    (Nothing, Just resError)  -> pure OnError {..}
+    _                         -> error "Unknown response"
 
 instance FromJSON Response where
   parseJSON = withObject "Response" parseResponse
@@ -174,7 +174,8 @@ instance ToJSON Response where
 --  ErrorObject  --
 -------------------
 data ErrorCode = ParseError | InvalidRequest | InvalidParams | MethodNotFound | InternalError | ServerError Int
-  deriving (Eq, Show, Generic, Hashable)
+  deriving stock(Eq, Show, Generic)
+  deriving anyclass (Hashable)
 
 ecode = [ (ParseError,  (-32700))
         , (InvalidRequest,  (-32600))
@@ -234,8 +235,8 @@ data Error
         errorData    :: !Value
       }
   | ErrorV1 {errorData :: !Value}
-  deriving (Eq, Show, Generic)
-instance NFData Error
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass NFData
 
 instance FromJSON Error where
   parseJSON = withObject "Error" parseError
