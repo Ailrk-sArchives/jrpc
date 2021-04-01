@@ -24,7 +24,7 @@ library
   -- other-modules:
   -- other-extensions:
   build-depends:
-      base >=4.13 && <4.14
+      base >=4.13 && <5
     , aeson
     , hashable
     , bytestring
@@ -45,7 +45,7 @@ test-suite test
   hs-source-dirs:      test
   main-is:             Spec.hs
   build-depends:
-      base >=4.13 && <4.14
+      base >=4.13 && <5
     , aeson
     , conduit
     , network-conduit

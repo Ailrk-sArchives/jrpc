@@ -11,4 +11,6 @@ import Data.ByteString
 import Network.JRPC.Data
 
 
+data Session = Session {
 
+                       }
